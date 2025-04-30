@@ -82,7 +82,6 @@ class UserController {
 
   async getUser(req, res, next) {
     const id = req.user.id;
-    console.log(id);
 
     const user = await User.findByPk(id);
 
@@ -90,7 +89,10 @@ class UserController {
       return next(ApiError.badRequest("Пользователь не найден"));
     }
 
-    return res.json(user);
+    const userData = user.toJSON();
+    delete userData.password;
+
+    return res.json(userData);
   }
 }
 
