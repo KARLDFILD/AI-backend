@@ -1,4 +1,4 @@
-const { Character } = require("../models/models");
+const { Character, User } = require("../models/models");
 const ApiError = require("../error/ApiError");
 
 class CharacterController {
@@ -52,11 +52,27 @@ class CharacterController {
     }
   }
 
-  async getOne(req, res) {
+  async getOne(req, res, next) {
     const { id } = req.body;
-    const character = await Character.findByPk(id);
 
-    return res.json(character);
+    try {
+      const character = await Character.findByPk(id, {
+        include: [
+          {
+            model: User,
+            attributes: ["id", "user_name"],
+          },
+        ],
+      });
+
+      if (!character) {
+        return next(ApiError.badRequest("Персонаж не найден"));
+      }
+
+      return res.json(character);
+    } catch (error) {
+      return next(ApiError.internal("Ошибка при получении персонажа"));
+    }
   }
 
   async getAll(req, res) {
