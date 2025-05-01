@@ -70,8 +70,6 @@ class MessageController {
         where: { id: character_id },
       });
 
-      console.log(settings.settings);
-
       if (!chatSession) {
         return next(
           ApiError.badRequest("У вас нет чат-сессии с этим персонажем")
@@ -94,7 +92,7 @@ class MessageController {
       const finalPrompt = `${dialogHistory}\nHuman: ${content}\nAssistant:`;
 
       const fullSystemPrompt = settings
-        ? `${process.env.BASE_SYSTEM_PROMPT}\n${settings}`
+        ? `${process.env.BASE_SYSTEM_PROMPT}\n${settings.settings}`
         : process.env.BASE_SYSTEM_PROMPT;
 
       const response = await fetch("http://localhost:9117/api/generate", {
