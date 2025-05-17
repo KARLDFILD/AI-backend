@@ -26,7 +26,7 @@ const ChatSession = sequelize.define("chatSession", {
   user_id: { type: DataTypes.INTEGER, allowNull: false },
   character_id: { type: DataTypes.INTEGER, allowNull: false },
   context_history: {
-    type: DataTypes.ARRAY(DataTypes.INTEGER),
+    type: DataTypes.ARRAY(DataTypes.TEXT),
     allowNull: true,
   },
   last_message_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },

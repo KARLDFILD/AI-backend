@@ -1,27 +1,19 @@
+const fetch = require("node-fetch");
 const { User, ChatSession, Message, Character } = require("../models/models");
 const ApiError = require("../error/ApiError");
-const { encode, decode } = require("gpt-tokenizer");
 
 class MessageController {
   constructor() {
     this.sendMessage = this.sendMessage.bind(this);
-    this.tokenizeMessage = this.tokenizeMessage.bind(this);
     this.updateContextHistory = this.updateContextHistory.bind(this);
-    this.decodeTokens = this.decodeTokens.bind(this);
     this.formatDialogHistory = this.formatDialogHistory.bind(this);
-  }
-
-  tokenizeMessage(message) {
-    return encode(message);
   }
 
   async updateContextHistory(chatSession, newMessage, role) {
     try {
       let currentHistory = chatSession.context_history || [];
       const messageWithRole = `${role}: ${newMessage}`;
-      const tokenizedMessage = this.tokenizeMessage(messageWithRole);
-
-      currentHistory = [...currentHistory, ...tokenizedMessage];
+      currentHistory = [...currentHistory, messageWithRole];
 
       await chatSession.update({
         context_history: currentHistory,
@@ -42,12 +34,12 @@ class MessageController {
         order: [["createdAt", "ASC"]],
       });
 
-      let dialogHistory = messages
-        .map((msg) => {
-          const role = msg.sender_type === "MODEL" ? "MODEL" : "USER";
-          return `${role}: ${msg.content}`;
-        })
-        .join("\n");
+      const dialogHistory = messages.map((msg) => {
+        return {
+          role: msg.sender_type.toLowerCase(),
+          content: msg.content,
+        };
+      });
 
       return dialogHistory;
     } catch (error) {
@@ -57,17 +49,17 @@ class MessageController {
   }
 
   async sendMessage(req, res, next) {
-    const { chat_session_id, content, sender_type, tokens_used, character_id } =
-      req.body;
+    const { chat_session_id, content, sender_type, character_id } = req.body;
     const userId = req.user.id;
+    const apiKey = process.env.OPENROUTER_API_KEY;
+
+    if (!apiKey) {
+      return next(ApiError.internal("API ключ OpenRouter не задан"));
+    }
 
     try {
       const chatSession = await ChatSession.findOne({
         where: { id: chat_session_id, user_id: userId },
-      });
-
-      const settings = await Character.findOne({
-        where: { id: character_id },
       });
 
       if (!chatSession) {
@@ -76,65 +68,76 @@ class MessageController {
         );
       }
 
+      const character = await Character.findOne({
+        where: { id: character_id },
+      });
+
       const userMessage = await Message.create({
         user_id: userId,
         character_id: character_id,
         chat_session_id: chat_session_id,
         content: content,
         sender_type: sender_type,
-        tokens_used: tokens_used,
+        tokens_used: 0,
       });
 
       await this.updateContextHistory(chatSession, content, "USER");
 
+      const characterSettings = character?.settings || "";
       const dialogHistory = await this.formatDialogHistory(chat_session_id);
 
-      const finalPrompt = `${dialogHistory}\nHuman: ${content}\nAssistant:`;
+      const dialogAsText = dialogHistory
+        .map((m) => `${m.role === "user" ? "USER" : "ASSISTANT"}: ${m.content}`)
+        .join("\n");
 
-      const fullSystemPrompt = settings
-        ? `${process.env.BASE_SYSTEM_PROMPT}\n${settings.settings}`
-        : process.env.BASE_SYSTEM_PROMPT;
+      const fullPrompt = `${characterSettings}\n\n${dialogAsText}\nUSER: ${content}`;
+      console.log(fullPrompt);
 
-      const response = await fetch("http://localhost:9117/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "mannix/llama3.1-8b-abliterated",
-          prompt: finalPrompt,
-          stream: false,
-          system: fullSystemPrompt,
-          max_tokens: 150,
-          temperature: 0.7,
-        }),
-      });
+      const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "nousresearch/deephermes-3-mistral-24b-preview:free",
+            messages: [
+              {
+                role: "user",
+                content: fullPrompt,
+              },
+            ],
+          }),
+        }
+      );
 
-      const aiResponse = await response.json();
-      const aiMessageContent = aiResponse.response;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Ошибка OpenRouter:", errorText);
+        return next(ApiError.internal("Ошибка при обращении к модели"));
+      }
+
+      const data = await response.json();
+      const aiContent = data.choices[0].message.content;
 
       const aiMessage = await Message.create({
         user_id: userId,
         character_id: character_id,
         chat_session_id: chat_session_id,
-        content: aiMessageContent,
+        content: aiContent,
         sender_type: "MODEL",
-        tokens_used: aiResponse.tokens_used || 0,
+        tokens_used: 0,
       });
 
-      await this.updateContextHistory(chatSession, aiMessageContent, "MODEL");
+      await this.updateContextHistory(chatSession, aiContent, "MODEL");
 
-      return res.json({
-        aiMessage,
-      });
+      return res.json({ aiMessage });
     } catch (error) {
       console.error("Ошибка при отправке сообщения:", error);
       return next(ApiError.internal("Ошибка при отправке сообщения"));
     }
-  }
-
-  decodeTokens(tokens) {
-    return decode(tokens);
   }
 
   async getMessages(req, res, next) {
@@ -149,15 +152,13 @@ class MessageController {
           character_id: character_id,
         },
       });
-      // messages.forEach((mes) => console.log(mes.content));
 
       return res.json(messages);
     } catch (error) {
-      console.error("Ошибка при получении сообщения:", error);
-      return next(ApiError.internal("Ошибка при получении сообщения"));
+      console.error("Ошибка при получении сообщений:", error);
+      return next(ApiError.internal("Ошибка при получении сообщений"));
     }
   }
 }
 
-const messageController = new MessageController();
-module.exports = messageController;
+module.exports = new MessageController();

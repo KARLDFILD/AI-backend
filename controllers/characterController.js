@@ -6,7 +6,11 @@ class CharacterController {
     const { name, description, isPublic, settings } = req.body;
     const creator_id = req.user.id;
 
-    const { character_picture } = req.files;
+    const character_picture = req.files?.character_picture;
+
+    if (!character_picture) {
+      return next(ApiError.badRequest("Файл изображения не загружен"));
+    }
 
     try {
       const isPublicConverter = isPublic === "true";
@@ -57,27 +61,48 @@ class CharacterController {
 
     try {
       const character = await Character.findByPk(id, {
-        include: [
-          {
-            model: User,
-            attributes: ["id", "user_name"],
-          },
-        ],
+        include: [{ model: User, attributes: ["id", "user_name"] }],
       });
 
       if (!character) {
         return next(ApiError.badRequest("Персонаж не найден"));
       }
 
-      return res.json(character);
+      const base64Image = character.character_picture?.toString("base64");
+      const contentType = "image/jpeg";
+
+      return res.json({
+        ...character.toJSON(),
+        character_picture: base64Image
+          ? `data:${contentType};base64,${base64Image}`
+          : null,
+      });
     } catch (error) {
       return next(ApiError.internal("Ошибка при получении персонажа"));
     }
   }
 
-  async getAll(req, res) {
-    const allCharacters = await Character.findAll();
-    return res.json(allCharacters);
+  async getAll(req, res, next) {
+    try {
+      const allCharacters = await Character.findAll({
+        include: [{ model: User, attributes: ["id", "user_name"] }],
+      });
+
+      const charactersWithBase64 = allCharacters.map((char) => {
+        const base64Image = char.character_picture?.toString("base64");
+        const contentType = "image/jpeg";
+        return {
+          ...char.toJSON(),
+          character_picture: base64Image
+            ? `data:${contentType};base64,${base64Image}`
+            : null,
+        };
+      });
+
+      return res.json(charactersWithBase64);
+    } catch (error) {
+      return next(ApiError.internal("Ошибка при получении персонажей"));
+    }
   }
 
   async deleteCharacter(req, res, next) {
